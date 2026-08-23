@@ -142,9 +142,21 @@ impl PlayerState {
     }
 }
 
+/// The way a Magic game is being played.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameFormat {
+    /// A Constructed game.
+    Constructed,
+    /// A Limited game.
+    Limited,
+    /// A Commander game.
+    Commander,
+}
+
 /// Stores the state of a Magic game.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameState {
+    format: GameFormat,
     players: Vec<PlayerState>,
 }
 
@@ -199,7 +211,10 @@ impl GameState {
             .map(|deck| PlayerState::new(DEFAULT_STARTING_LIFE_TOTAL, deck))
             .collect();
 
-        Ok(Self { players })
+        Ok(Self {
+            format: GameFormat::Constructed,
+            players,
+        })
     }
 
     /// Creates a Limited game using `decks` for its players.
@@ -232,7 +247,48 @@ impl GameState {
             .map(|deck| PlayerState::new(DEFAULT_STARTING_LIFE_TOTAL, deck))
             .collect();
 
-        Ok(Self { players })
+        Ok(Self {
+            format: GameFormat::Limited,
+            players,
+        })
+    }
+
+    /// Creates a Commander game using `decks` for its players.
+    ///
+    /// Commander-specific deckbuilding restrictions and game setup will be
+    /// implemented with rule 903.
+    ///
+    /// # Rules
+    ///
+    /// 100.2c Commander decks are subject to additional deckbuilding
+    /// restrictions and requirements. See rule 903, “Commander,” for details.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GameStateError`] when fewer than two players are supplied.
+    pub fn new_commander(decks: Vec<Deck>) -> Result<Self, GameStateError> {
+        if decks.len() < MINIMUM_PLAYER_COUNT {
+            return Err(PlayerCountError {
+                player_count: decks.len(),
+            }
+            .into());
+        }
+
+        let players = decks
+            .into_iter()
+            .map(|deck| PlayerState::new(DEFAULT_STARTING_LIFE_TOTAL, deck))
+            .collect();
+
+        Ok(Self {
+            format: GameFormat::Commander,
+            players,
+        })
+    }
+
+    /// Returns the format of this game.
+    #[must_use]
+    pub const fn format(&self) -> GameFormat {
+        self.format
     }
 
     /// Returns the players in this game.
@@ -407,7 +463,7 @@ impl std::error::Error for GameStateError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{Card, DEFAULT_STARTING_LIFE_TOTAL, Deck, GameState, GameStateError};
+    use super::{Card, DEFAULT_STARTING_LIFE_TOTAL, Deck, GameFormat, GameState, GameStateError};
 
     fn basic_deck() -> Deck {
         Deck::new(vec![Card::new("Plains"); 60])
@@ -548,5 +604,17 @@ mod tests {
                 deck_size: 39,
             })
         );
+    }
+
+    #[test]
+    fn creates_a_commander_game_without_commander_deck_validation() {
+        let commander_deck = Deck::new(vec![Card::new("Sol Ring"); 5]);
+
+        let game_state = GameState::new_commander(vec![commander_deck, Deck::default()])
+            .expect("Commander deck requirements are not implemented yet");
+
+        assert_eq!(game_state.format(), GameFormat::Commander);
+        assert_eq!(game_state.player_count(), 2);
+        assert_eq!(game_state.players()[0].deck().cards().len(), 5);
     }
 }
