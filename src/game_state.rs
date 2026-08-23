@@ -8,6 +8,9 @@ pub const MINIMUM_PLAYER_COUNT: usize = 2;
 /// The minimum number of cards in a Constructed deck.
 pub const MINIMUM_CONSTRUCTED_DECK_SIZE: usize = 60;
 
+/// The minimum number of cards in a Limited deck.
+pub const MINIMUM_LIMITED_DECK_SIZE: usize = 40;
+
 /// The starting life total for a normal Magic game.
 ///
 /// # Rules
@@ -199,6 +202,39 @@ impl GameState {
         Ok(Self { players })
     }
 
+    /// Creates a Limited game using `decks` for its players.
+    ///
+    /// # Rules
+    ///
+    /// 100.2b In limited play (a way of playing in which each player gets the
+    /// same quantity of unopened Magic product such as booster packs and
+    /// creates their own deck using only this product and basic land cards),
+    /// each deck has a minimum deck size of 40 cards. A limited deck may
+    /// contain as many duplicates of a card as are included with the product.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GameStateError`] if the player count or any deck is invalid.
+    pub fn new_limited(decks: Vec<Deck>) -> Result<Self, GameStateError> {
+        if decks.len() < MINIMUM_PLAYER_COUNT {
+            return Err(PlayerCountError {
+                player_count: decks.len(),
+            }
+            .into());
+        }
+
+        for (player_index, deck) in decks.iter().enumerate() {
+            validate_limited_deck(deck, player_index)?;
+        }
+
+        let players = decks
+            .into_iter()
+            .map(|deck| PlayerState::new(DEFAULT_STARTING_LIFE_TOTAL, deck))
+            .collect();
+
+        Ok(Self { players })
+    }
+
     /// Returns the players in this game.
     #[must_use]
     pub fn players(&self) -> &[PlayerState] {
@@ -264,6 +300,17 @@ fn validate_constructed_deck(deck: &Deck, player_index: usize) -> Result<(), Gam
     Ok(())
 }
 
+fn validate_limited_deck(deck: &Deck, player_index: usize) -> Result<(), GameStateError> {
+    if deck.cards.len() < MINIMUM_LIMITED_DECK_SIZE {
+        return Err(GameStateError::LimitedDeckTooSmall {
+            player_index,
+            deck_size: deck.cards.len(),
+        });
+    }
+
+    Ok(())
+}
+
 /// Error returned when attempting to create a game with too few players.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayerCountError {
@@ -302,6 +349,13 @@ pub enum GameStateError {
         /// Number of cards in the deck.
         deck_size: usize,
     },
+    /// A Limited deck has fewer than 40 cards.
+    LimitedDeckTooSmall {
+        /// Zero-based index of the player who owns the deck.
+        player_index: usize,
+        /// Number of cards in the deck.
+        deck_size: usize,
+    },
     /// A nonbasic card has more than four copies in a Constructed deck.
     TooManyCardCopies {
         /// Zero-based index of the player who owns the deck.
@@ -329,6 +383,13 @@ impl fmt::Display for GameStateError {
             } => write!(
                 formatter,
                 "player {player_index}'s Constructed deck has {deck_size} cards; it needs at least {MINIMUM_CONSTRUCTED_DECK_SIZE}"
+            ),
+            Self::LimitedDeckTooSmall {
+                player_index,
+                deck_size,
+            } => write!(
+                formatter,
+                "player {player_index}'s Limited deck has {deck_size} cards; it needs at least {MINIMUM_LIMITED_DECK_SIZE}"
             ),
             Self::TooManyCardCopies {
                 player_index,
@@ -463,5 +524,29 @@ mod tests {
         ]);
 
         assert!(GameState::new(vec![Deck::new(cards), basic_deck()]).is_ok());
+    }
+
+    #[test]
+    fn creates_a_limited_game_with_more_than_four_copies_of_a_card() {
+        let limited_deck = Deck::new(vec![Card::new("Lightning Bolt"); 40]);
+
+        let game_state = GameState::new_limited(vec![limited_deck, basic_deck()])
+            .expect("Limited decks may contain any number of duplicates");
+
+        assert_eq!(game_state.player_count(), 2);
+        assert_eq!(game_state.players()[0].deck().cards().len(), 40);
+    }
+
+    #[test]
+    fn rejects_a_limited_deck_with_fewer_than_forty_cards() {
+        let limited_deck = Deck::new(vec![Card::new("Lightning Bolt"); 39]);
+
+        assert_eq!(
+            GameState::new_limited(vec![limited_deck, basic_deck()]),
+            Err(GameStateError::LimitedDeckTooSmall {
+                player_index: 0,
+                deck_size: 39,
+            })
+        );
     }
 }
