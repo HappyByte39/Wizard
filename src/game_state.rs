@@ -109,6 +109,22 @@ impl Deck {
     }
 }
 
+/// A player's supplementary Attraction deck.
+///
+/// Attraction cards will be modeled when rule 717 is implemented.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AttractionDeck {
+    cards: Vec<Card>,
+}
+
+impl AttractionDeck {
+    /// Returns the cards in this Attraction deck.
+    #[must_use]
+    pub fn cards(&self) -> &[Card] {
+        &self.cards
+    }
+}
+
 /// State that belongs to an individual player.
 ///
 /// # Rules
@@ -120,13 +136,18 @@ impl Deck {
 pub struct PlayerState {
     life_total: i32,
     deck: Deck,
+    attraction_deck: AttractionDeck,
 }
 
 impl PlayerState {
     /// Creates a player state with the given life total and deck.
     #[must_use]
     pub const fn new(life_total: i32, deck: Deck) -> Self {
-        Self { life_total, deck }
+        Self {
+            life_total,
+            deck,
+            attraction_deck: AttractionDeck { cards: Vec::new() },
+        }
     }
 
     /// Returns this player's current life total.
@@ -140,6 +161,12 @@ impl PlayerState {
     pub const fn deck(&self) -> &Deck {
         &self.deck
     }
+
+    /// Returns this player's Attraction deck.
+    #[must_use]
+    pub const fn attraction_deck(&self) -> &AttractionDeck {
+        &self.attraction_deck
+    }
 }
 
 /// The way a Magic game is being played.
@@ -151,6 +178,10 @@ pub enum GameFormat {
     Limited,
     /// A Commander game.
     Commander,
+    /// A Planechase game.
+    Planechase,
+    /// An Archenemy game.
+    Archenemy,
 }
 
 /// Stores the state of a Magic game.
@@ -283,6 +314,65 @@ impl GameState {
             format: GameFormat::Commander,
             players,
         })
+    }
+
+    /// Creates a Planechase game using `decks` for its players.
+    ///
+    /// Planechase-specific supplementary deck rules will be implemented with
+    /// rule 901.
+    ///
+    /// # Rules
+    ///
+    /// 100.2d Some formats and casual play variants allow players to use a
+    /// supplementary deck of nontraditional Magic cards (see rule 108.2a).
+    /// These supplementary decks have their own deck construction rules. See
+    /// rule 717, “Attraction Cards;” rule 901, “Planechase;” and rule 904,
+    /// “Archenemy.”
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GameStateError`] when fewer than two players are supplied.
+    pub fn new_planechase(decks: Vec<Deck>) -> Result<Self, GameStateError> {
+        Self::new_supplementary_format(decks, GameFormat::Planechase)
+    }
+
+    /// Creates an Archenemy game using `decks` for its players.
+    ///
+    /// Archenemy-specific supplementary deck rules will be implemented with
+    /// rule 904.
+    ///
+    /// # Rules
+    ///
+    /// 100.2d Some formats and casual play variants allow players to use a
+    /// supplementary deck of nontraditional Magic cards (see rule 108.2a).
+    /// These supplementary decks have their own deck construction rules. See
+    /// rule 717, “Attraction Cards;” rule 901, “Planechase;” and rule 904,
+    /// “Archenemy.”
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GameStateError`] when fewer than two players are supplied.
+    pub fn new_archenemy(decks: Vec<Deck>) -> Result<Self, GameStateError> {
+        Self::new_supplementary_format(decks, GameFormat::Archenemy)
+    }
+
+    fn new_supplementary_format(
+        decks: Vec<Deck>,
+        format: GameFormat,
+    ) -> Result<Self, GameStateError> {
+        if decks.len() < MINIMUM_PLAYER_COUNT {
+            return Err(PlayerCountError {
+                player_count: decks.len(),
+            }
+            .into());
+        }
+
+        let players = decks
+            .into_iter()
+            .map(|deck| PlayerState::new(DEFAULT_STARTING_LIFE_TOTAL, deck))
+            .collect();
+
+        Ok(Self { format, players })
     }
 
     /// Returns the format of this game.
@@ -616,5 +706,33 @@ mod tests {
         assert_eq!(game_state.format(), GameFormat::Commander);
         assert_eq!(game_state.player_count(), 2);
         assert_eq!(game_state.players()[0].deck().cards().len(), 5);
+    }
+
+    #[test]
+    fn creates_a_planechase_template_game_with_empty_attraction_decks() {
+        let game_state = GameState::new_planechase(vec![Deck::default(), Deck::default()])
+            .expect("Planechase rules are not implemented yet");
+
+        assert_eq!(game_state.format(), GameFormat::Planechase);
+        assert!(
+            game_state
+                .players()
+                .iter()
+                .all(|player| player.attraction_deck().cards().is_empty())
+        );
+    }
+
+    #[test]
+    fn creates_an_archenemy_template_game_with_empty_attraction_decks() {
+        let game_state = GameState::new_archenemy(vec![Deck::default(), Deck::default()])
+            .expect("Archenemy rules are not implemented yet");
+
+        assert_eq!(game_state.format(), GameFormat::Archenemy);
+        assert!(
+            game_state
+                .players()
+                .iter()
+                .all(|player| player.attraction_deck().cards().is_empty())
+        );
     }
 }
