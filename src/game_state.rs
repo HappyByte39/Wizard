@@ -8,6 +8,9 @@ pub const MINIMUM_PLAYER_COUNT: usize = 2;
 /// The minimum number of cards in a Constructed deck.
 pub const MINIMUM_CONSTRUCTED_DECK_SIZE: usize = 60;
 
+/// The maximum number of cards in a Constructed sideboard.
+pub const MAXIMUM_CONSTRUCTED_SIDEBOARD_SIZE: usize = 15;
+
 /// The minimum number of cards in a Limited deck.
 pub const MINIMUM_LIMITED_DECK_SIZE: usize = 40;
 
@@ -109,6 +112,49 @@ impl Deck {
     }
 }
 
+/// A player's sideboard.
+///
+/// # Rules
+///
+/// 100.4. Each player may also have a sideboard, which is a group of
+/// additional cards the player may use to modify their deck between games of a
+/// match. Sideboard rules and restrictions for some formats are modified by
+/// the Magic: The Gathering Tournament Rules (found at
+/// WPN.Wizards.com/en/rules-documents).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Sideboard {
+    cards: Vec<Card>,
+}
+
+impl Sideboard {
+    /// Creates a sideboard containing `cards`.
+    #[must_use]
+    pub fn new(cards: Vec<Card>) -> Self {
+        Self { cards }
+    }
+
+    /// Returns the cards in this sideboard.
+    #[must_use]
+    pub fn cards(&self) -> &[Card] {
+        &self.cards
+    }
+}
+
+/// Decks supplied for a player when a game is created.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerDecks {
+    deck: Deck,
+    sideboard: Sideboard,
+}
+
+impl PlayerDecks {
+    /// Creates a player's deck and sideboard configuration.
+    #[must_use]
+    pub const fn new(deck: Deck, sideboard: Sideboard) -> Self {
+        Self { deck, sideboard }
+    }
+}
+
 /// A player's supplementary Attraction deck.
 ///
 /// Attraction cards will be modeled when rule 717 is implemented.
@@ -136,16 +182,18 @@ impl AttractionDeck {
 pub struct PlayerState {
     life_total: i32,
     deck: Deck,
+    sideboard: Sideboard,
     attraction_deck: AttractionDeck,
 }
 
 impl PlayerState {
-    /// Creates a player state with the given life total and deck.
+    /// Creates a player state with the given life total, deck, and sideboard.
     #[must_use]
-    pub const fn new(life_total: i32, deck: Deck) -> Self {
+    pub const fn new(life_total: i32, deck: Deck, sideboard: Sideboard) -> Self {
         Self {
             life_total,
             deck,
+            sideboard,
             attraction_deck: AttractionDeck { cards: Vec::new() },
         }
     }
@@ -160,6 +208,12 @@ impl PlayerState {
     #[must_use]
     pub const fn deck(&self) -> &Deck {
         &self.deck
+    }
+
+    /// Returns this player's sideboard.
+    #[must_use]
+    pub const fn sideboard(&self) -> &Sideboard {
+        &self.sideboard
     }
 
     /// Returns this player's Attraction deck.
@@ -192,7 +246,7 @@ pub struct GameState {
 }
 
 impl GameState {
-    /// Creates a Constructed game using `decks` for its players.
+    /// Creates a Constructed game using deck configurations for its players.
     ///
     /// This is the default game constructor until other ways of playing are
     /// implemented.
@@ -206,11 +260,11 @@ impl GameState {
     ///
     /// Returns [`GameStateError`] if the player count or any Constructed deck
     /// is invalid.
-    pub fn new(decks: Vec<Deck>) -> Result<Self, GameStateError> {
-        Self::new_constructed(decks)
+    pub fn new(player_decks: Vec<PlayerDecks>) -> Result<Self, GameStateError> {
+        Self::new_constructed(player_decks)
     }
 
-    /// Creates a Constructed game using `decks` for its players.
+    /// Creates a Constructed game using deck configurations for its players.
     ///
     /// # Rules
     ///
@@ -222,24 +276,34 @@ impl GameState {
     /// cards with interchangeable names have the same English name (see rule
     /// 201.3).
     ///
+    /// 100.4a In constructed play, a sideboard may contain no more than
+    /// fifteen cards. The four-card limit (see rule 100.2a) applies to the
+    /// combined deck and sideboard.
+    ///
     /// # Errors
     ///
     /// Returns [`GameStateError`] if the player count or any deck is invalid.
-    pub fn new_constructed(decks: Vec<Deck>) -> Result<Self, GameStateError> {
-        if decks.len() < MINIMUM_PLAYER_COUNT {
+    pub fn new_constructed(player_decks: Vec<PlayerDecks>) -> Result<Self, GameStateError> {
+        if player_decks.len() < MINIMUM_PLAYER_COUNT {
             return Err(PlayerCountError {
-                player_count: decks.len(),
+                player_count: player_decks.len(),
             }
             .into());
         }
 
-        for (player_index, deck) in decks.iter().enumerate() {
-            validate_constructed_deck(deck, player_index)?;
+        for (player_index, player_decks) in player_decks.iter().enumerate() {
+            validate_constructed_deck(player_decks, player_index)?;
         }
 
-        let players = decks
+        let players = player_decks
             .into_iter()
-            .map(|deck| PlayerState::new(DEFAULT_STARTING_LIFE_TOTAL, deck))
+            .map(|player_decks| {
+                PlayerState::new(
+                    DEFAULT_STARTING_LIFE_TOTAL,
+                    player_decks.deck,
+                    player_decks.sideboard,
+                )
+            })
             .collect();
 
         Ok(Self {
@@ -248,7 +312,7 @@ impl GameState {
         })
     }
 
-    /// Creates a Limited game using `decks` for its players.
+    /// Creates a Limited game using deck configurations for its players.
     ///
     /// # Rules
     ///
@@ -261,21 +325,27 @@ impl GameState {
     /// # Errors
     ///
     /// Returns [`GameStateError`] if the player count or any deck is invalid.
-    pub fn new_limited(decks: Vec<Deck>) -> Result<Self, GameStateError> {
-        if decks.len() < MINIMUM_PLAYER_COUNT {
+    pub fn new_limited(player_decks: Vec<PlayerDecks>) -> Result<Self, GameStateError> {
+        if player_decks.len() < MINIMUM_PLAYER_COUNT {
             return Err(PlayerCountError {
-                player_count: decks.len(),
+                player_count: player_decks.len(),
             }
             .into());
         }
 
-        for (player_index, deck) in decks.iter().enumerate() {
-            validate_limited_deck(deck, player_index)?;
+        for (player_index, player_decks) in player_decks.iter().enumerate() {
+            validate_limited_deck(&player_decks.deck, player_index)?;
         }
 
-        let players = decks
+        let players = player_decks
             .into_iter()
-            .map(|deck| PlayerState::new(DEFAULT_STARTING_LIFE_TOTAL, deck))
+            .map(|player_decks| {
+                PlayerState::new(
+                    DEFAULT_STARTING_LIFE_TOTAL,
+                    player_decks.deck,
+                    player_decks.sideboard,
+                )
+            })
             .collect();
 
         Ok(Self {
@@ -284,7 +354,7 @@ impl GameState {
         })
     }
 
-    /// Creates a Commander game using `decks` for its players.
+    /// Creates a Commander game using deck configurations for its players.
     ///
     /// Commander-specific deckbuilding restrictions and game setup will be
     /// implemented with rule 903.
@@ -297,17 +367,23 @@ impl GameState {
     /// # Errors
     ///
     /// Returns [`GameStateError`] when fewer than two players are supplied.
-    pub fn new_commander(decks: Vec<Deck>) -> Result<Self, GameStateError> {
-        if decks.len() < MINIMUM_PLAYER_COUNT {
+    pub fn new_commander(player_decks: Vec<PlayerDecks>) -> Result<Self, GameStateError> {
+        if player_decks.len() < MINIMUM_PLAYER_COUNT {
             return Err(PlayerCountError {
-                player_count: decks.len(),
+                player_count: player_decks.len(),
             }
             .into());
         }
 
-        let players = decks
+        let players = player_decks
             .into_iter()
-            .map(|deck| PlayerState::new(DEFAULT_STARTING_LIFE_TOTAL, deck))
+            .map(|player_decks| {
+                PlayerState::new(
+                    DEFAULT_STARTING_LIFE_TOTAL,
+                    player_decks.deck,
+                    player_decks.sideboard,
+                )
+            })
             .collect();
 
         Ok(Self {
@@ -316,7 +392,7 @@ impl GameState {
         })
     }
 
-    /// Creates a Planechase game using `decks` for its players.
+    /// Creates a Planechase game using deck configurations for its players.
     ///
     /// Planechase-specific supplementary deck rules will be implemented with
     /// rule 901.
@@ -332,11 +408,11 @@ impl GameState {
     /// # Errors
     ///
     /// Returns [`GameStateError`] when fewer than two players are supplied.
-    pub fn new_planechase(decks: Vec<Deck>) -> Result<Self, GameStateError> {
-        Self::new_supplementary_format(decks, GameFormat::Planechase)
+    pub fn new_planechase(player_decks: Vec<PlayerDecks>) -> Result<Self, GameStateError> {
+        Self::new_supplementary_format(player_decks, GameFormat::Planechase)
     }
 
-    /// Creates an Archenemy game using `decks` for its players.
+    /// Creates an Archenemy game using deck configurations for its players.
     ///
     /// Archenemy-specific supplementary deck rules will be implemented with
     /// rule 904.
@@ -352,24 +428,30 @@ impl GameState {
     /// # Errors
     ///
     /// Returns [`GameStateError`] when fewer than two players are supplied.
-    pub fn new_archenemy(decks: Vec<Deck>) -> Result<Self, GameStateError> {
-        Self::new_supplementary_format(decks, GameFormat::Archenemy)
+    pub fn new_archenemy(player_decks: Vec<PlayerDecks>) -> Result<Self, GameStateError> {
+        Self::new_supplementary_format(player_decks, GameFormat::Archenemy)
     }
 
     fn new_supplementary_format(
-        decks: Vec<Deck>,
+        player_decks: Vec<PlayerDecks>,
         format: GameFormat,
     ) -> Result<Self, GameStateError> {
-        if decks.len() < MINIMUM_PLAYER_COUNT {
+        if player_decks.len() < MINIMUM_PLAYER_COUNT {
             return Err(PlayerCountError {
-                player_count: decks.len(),
+                player_count: player_decks.len(),
             }
             .into());
         }
 
-        let players = decks
+        let players = player_decks
             .into_iter()
-            .map(|deck| PlayerState::new(DEFAULT_STARTING_LIFE_TOTAL, deck))
+            .map(|player_decks| {
+                PlayerState::new(
+                    DEFAULT_STARTING_LIFE_TOTAL,
+                    player_decks.deck,
+                    player_decks.sideboard,
+                )
+            })
             .collect();
 
         Ok(Self { format, players })
@@ -415,16 +497,31 @@ impl GameState {
     }
 }
 
-fn validate_constructed_deck(deck: &Deck, player_index: usize) -> Result<(), GameStateError> {
-    if deck.cards.len() < MINIMUM_CONSTRUCTED_DECK_SIZE {
+fn validate_constructed_deck(
+    player_decks: &PlayerDecks,
+    player_index: usize,
+) -> Result<(), GameStateError> {
+    if player_decks.deck.cards.len() < MINIMUM_CONSTRUCTED_DECK_SIZE {
         return Err(GameStateError::DeckTooSmall {
             player_index,
-            deck_size: deck.cards.len(),
+            deck_size: player_decks.deck.cards.len(),
+        });
+    }
+
+    if player_decks.sideboard.cards.len() > MAXIMUM_CONSTRUCTED_SIDEBOARD_SIZE {
+        return Err(GameStateError::SideboardTooLarge {
+            player_index,
+            sideboard_size: player_decks.sideboard.cards.len(),
         });
     }
 
     let mut copies_by_name = HashMap::new();
-    for card in &deck.cards {
+    for card in player_decks
+        .deck
+        .cards
+        .iter()
+        .chain(&player_decks.sideboard.cards)
+    {
         if card.is_basic_land() {
             continue;
         }
@@ -495,6 +592,13 @@ pub enum GameStateError {
         /// Number of cards in the deck.
         deck_size: usize,
     },
+    /// A Constructed sideboard has more than 15 cards.
+    SideboardTooLarge {
+        /// Zero-based index of the player who owns the sideboard.
+        player_index: usize,
+        /// Number of cards in the sideboard.
+        sideboard_size: usize,
+    },
     /// A Limited deck has fewer than 40 cards.
     LimitedDeckTooSmall {
         /// Zero-based index of the player who owns the deck.
@@ -530,6 +634,13 @@ impl fmt::Display for GameStateError {
                 formatter,
                 "player {player_index}'s Constructed deck has {deck_size} cards; it needs at least {MINIMUM_CONSTRUCTED_DECK_SIZE}"
             ),
+            Self::SideboardTooLarge {
+                player_index,
+                sideboard_size,
+            } => write!(
+                formatter,
+                "player {player_index}'s Constructed sideboard has {sideboard_size} cards; it may have at most {MAXIMUM_CONSTRUCTED_SIDEBOARD_SIZE}"
+            ),
             Self::LimitedDeckTooSmall {
                 player_index,
                 deck_size,
@@ -553,15 +664,24 @@ impl std::error::Error for GameStateError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{Card, DEFAULT_STARTING_LIFE_TOTAL, Deck, GameFormat, GameState, GameStateError};
+    use super::{
+        Card, DEFAULT_STARTING_LIFE_TOTAL, Deck, GameFormat, GameState, GameStateError,
+        PlayerDecks, Sideboard,
+    };
 
     fn basic_deck() -> Deck {
         Deck::new(vec![Card::new("Plains"); 60])
     }
 
+    fn player_decks(deck: Deck) -> PlayerDecks {
+        PlayerDecks::new(deck, Sideboard::default())
+    }
+
     #[test]
     fn stores_the_player_count_for_a_two_player_game() {
-        let game_state = GameState::new(vec![basic_deck(), basic_deck()]).expect("decks are valid");
+        let game_state =
+            GameState::new(vec![player_decks(basic_deck()), player_decks(basic_deck())])
+                .expect("decks are valid");
 
         assert_eq!(game_state.player_count(), 2);
         assert_eq!(game_state.players().len(), game_state.player_count());
@@ -576,9 +696,13 @@ mod tests {
 
     #[test]
     fn stores_the_player_count_for_a_multiplayer_game() {
-        let game_state =
-            GameState::new(vec![basic_deck(), basic_deck(), basic_deck(), basic_deck()])
-                .expect("decks are valid");
+        let game_state = GameState::new(vec![
+            player_decks(basic_deck()),
+            player_decks(basic_deck()),
+            player_decks(basic_deck()),
+            player_decks(basic_deck()),
+        ])
+        .expect("decks are valid");
 
         assert_eq!(game_state.player_count(), 4);
         assert_eq!(game_state.players().len(), game_state.player_count());
@@ -589,7 +713,7 @@ mod tests {
     #[test]
     fn rejects_games_with_fewer_than_two_players() {
         assert_eq!(
-            GameState::new(vec![basic_deck()]),
+            GameState::new(vec![player_decks(basic_deck())]),
             Err(GameStateError::PlayerCount(super::PlayerCountError {
                 player_count: 1,
             }))
@@ -598,7 +722,10 @@ mod tests {
 
     #[test]
     fn rejects_a_constructed_deck_with_fewer_than_sixty_cards() {
-        let result = GameState::new(vec![Deck::new(vec![Card::new("Plains"); 59]), basic_deck()]);
+        let result = GameState::new(vec![
+            player_decks(Deck::new(vec![Card::new("Plains"); 59])),
+            player_decks(basic_deck()),
+        ]);
 
         assert_eq!(
             result,
@@ -611,7 +738,9 @@ mod tests {
 
     #[test]
     fn allows_any_number_of_basic_lands() {
-        assert!(GameState::new(vec![basic_deck(), basic_deck()]).is_ok());
+        assert!(
+            GameState::new(vec![player_decks(basic_deck()), player_decks(basic_deck())]).is_ok()
+        );
     }
 
     #[test]
@@ -626,7 +755,7 @@ mod tests {
         let deck = Deck::new(vec![Card::new("Lightning Bolt"); 60]);
 
         assert_eq!(
-            GameState::new(vec![deck, basic_deck()]),
+            GameState::new(vec![player_decks(deck), player_decks(basic_deck())]),
             Err(GameStateError::TooManyCardCopies {
                 player_index: 0,
                 rules_purpose_name: "Lightning Bolt".to_owned(),
@@ -643,7 +772,10 @@ mod tests {
         }));
 
         assert_eq!(
-            GameState::new(vec![Deck::new(cards), basic_deck()]),
+            GameState::new(vec![
+                player_decks(Deck::new(cards)),
+                player_decks(basic_deck())
+            ]),
             Err(GameStateError::TooManyCardCopies {
                 player_index: 0,
                 rules_purpose_name: "Shared Name".to_owned(),
@@ -669,15 +801,22 @@ mod tests {
             Card::with_rules_purpose_name("Alternate Name Two", "Partially Interchangeable Name"),
         ]);
 
-        assert!(GameState::new(vec![Deck::new(cards), basic_deck()]).is_ok());
+        assert!(
+            GameState::new(vec![
+                player_decks(Deck::new(cards)),
+                player_decks(basic_deck())
+            ])
+            .is_ok()
+        );
     }
 
     #[test]
     fn creates_a_limited_game_with_more_than_four_copies_of_a_card() {
         let limited_deck = Deck::new(vec![Card::new("Lightning Bolt"); 40]);
 
-        let game_state = GameState::new_limited(vec![limited_deck, basic_deck()])
-            .expect("Limited decks may contain any number of duplicates");
+        let game_state =
+            GameState::new_limited(vec![player_decks(limited_deck), player_decks(basic_deck())])
+                .expect("Limited decks may contain any number of duplicates");
 
         assert_eq!(game_state.player_count(), 2);
         assert_eq!(game_state.players()[0].deck().cards().len(), 40);
@@ -688,7 +827,7 @@ mod tests {
         let limited_deck = Deck::new(vec![Card::new("Lightning Bolt"); 39]);
 
         assert_eq!(
-            GameState::new_limited(vec![limited_deck, basic_deck()]),
+            GameState::new_limited(vec![player_decks(limited_deck), player_decks(basic_deck())]),
             Err(GameStateError::LimitedDeckTooSmall {
                 player_index: 0,
                 deck_size: 39,
@@ -700,8 +839,11 @@ mod tests {
     fn creates_a_commander_game_without_commander_deck_validation() {
         let commander_deck = Deck::new(vec![Card::new("Sol Ring"); 5]);
 
-        let game_state = GameState::new_commander(vec![commander_deck, Deck::default()])
-            .expect("Commander deck requirements are not implemented yet");
+        let game_state = GameState::new_commander(vec![
+            player_decks(commander_deck),
+            player_decks(Deck::default()),
+        ])
+        .expect("Commander deck requirements are not implemented yet");
 
         assert_eq!(game_state.format(), GameFormat::Commander);
         assert_eq!(game_state.player_count(), 2);
@@ -710,8 +852,11 @@ mod tests {
 
     #[test]
     fn creates_a_planechase_template_game_with_empty_attraction_decks() {
-        let game_state = GameState::new_planechase(vec![Deck::default(), Deck::default()])
-            .expect("Planechase rules are not implemented yet");
+        let game_state = GameState::new_planechase(vec![
+            player_decks(Deck::default()),
+            player_decks(Deck::default()),
+        ])
+        .expect("Planechase rules are not implemented yet");
 
         assert_eq!(game_state.format(), GameFormat::Planechase);
         assert!(
@@ -724,8 +869,11 @@ mod tests {
 
     #[test]
     fn creates_an_archenemy_template_game_with_empty_attraction_decks() {
-        let game_state = GameState::new_archenemy(vec![Deck::default(), Deck::default()])
-            .expect("Archenemy rules are not implemented yet");
+        let game_state = GameState::new_archenemy(vec![
+            player_decks(Deck::default()),
+            player_decks(Deck::default()),
+        ])
+        .expect("Archenemy rules are not implemented yet");
 
         assert_eq!(game_state.format(), GameFormat::Archenemy);
         assert!(
@@ -733,6 +881,58 @@ mod tests {
                 .players()
                 .iter()
                 .all(|player| player.attraction_deck().cards().is_empty())
+        );
+    }
+
+    #[test]
+    fn stores_the_sideboard_supplied_for_each_player() {
+        let sideboard = Sideboard::new(vec![Card::new("Naturalize"); 4]);
+
+        let game_state = GameState::new(vec![
+            PlayerDecks::new(basic_deck(), sideboard),
+            player_decks(basic_deck()),
+        ])
+        .expect("a four-card sideboard is valid");
+
+        assert_eq!(game_state.players()[0].sideboard().cards().len(), 4);
+        assert_eq!(
+            game_state.players()[0].sideboard().cards()[0].english_name(),
+            "Naturalize"
+        );
+    }
+
+    #[test]
+    fn rejects_a_constructed_sideboard_with_more_than_fifteen_cards() {
+        let sideboard = Sideboard::new(vec![Card::new("Naturalize"); 16]);
+
+        assert_eq!(
+            GameState::new(vec![
+                PlayerDecks::new(basic_deck(), sideboard),
+                player_decks(basic_deck()),
+            ]),
+            Err(GameStateError::SideboardTooLarge {
+                player_index: 0,
+                sideboard_size: 16,
+            })
+        );
+    }
+
+    #[test]
+    fn applies_the_constructed_copy_limit_to_the_deck_and_sideboard_together() {
+        let mut deck_cards = vec![Card::new("Plains"); 56];
+        deck_cards.extend(vec![Card::new("Lightning Bolt"); 4]);
+        let sideboard = Sideboard::new(vec![Card::new("Lightning Bolt")]);
+
+        assert_eq!(
+            GameState::new(vec![
+                PlayerDecks::new(Deck::new(deck_cards), sideboard),
+                player_decks(basic_deck()),
+            ]),
+            Err(GameStateError::TooManyCardCopies {
+                player_index: 0,
+                rules_purpose_name: "Lightning Bolt".to_owned(),
+                copies: 5,
+            })
         );
     }
 }
