@@ -39,6 +39,27 @@ impl GameState {
     pub const fn player_count(&self) -> usize {
         self.player_count
     }
+
+    /// Returns whether this is a two-player game.
+    ///
+    /// # Rules
+    ///
+    /// 100.1a A two-player game is a game that begins with only two players.
+    #[must_use]
+    pub const fn is_two_player_game(&self) -> bool {
+        self.player_count == MINIMUM_PLAYER_COUNT
+    }
+
+    /// Returns whether this is a multiplayer game.
+    ///
+    /// # Rules
+    ///
+    /// 100.1b A multiplayer game is a game that begins with more than two
+    /// players. See section 8, “Multiplayer Rules.”
+    #[must_use]
+    pub const fn is_multiplayer_game(&self) -> bool {
+        self.player_count > MINIMUM_PLAYER_COUNT
+    }
 }
 
 /// Error returned when attempting to create a game with too few players.
@@ -76,6 +97,8 @@ mod tests {
         let game_state = GameState::new(MINIMUM_PLAYER_COUNT).expect("two players are valid");
 
         assert_eq!(game_state.player_count(), 2);
+        assert!(game_state.is_two_player_game());
+        assert!(!game_state.is_multiplayer_game());
     }
 
     #[test]
@@ -83,6 +106,8 @@ mod tests {
         let game_state = GameState::new(4).expect("four players are valid");
 
         assert_eq!(game_state.player_count(), 4);
+        assert!(!game_state.is_two_player_game());
+        assert!(game_state.is_multiplayer_game());
     }
 
     #[test]
