@@ -6,10 +6,6 @@ use std::fmt;
 pub const MINIMUM_PLAYER_COUNT: usize = 2;
 
 /// Stores the state of a Magic game.
-///
-/// Currently this state only records how many players are in the game. More
-/// game-wide state will be added here as the rules that require it are
-/// implemented.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameState {
     player_count: usize,
@@ -47,7 +43,7 @@ impl GameState {
     /// 100.1a A two-player game is a game that begins with only two players.
     #[must_use]
     pub const fn is_two_player_game(&self) -> bool {
-        self.player_count == MINIMUM_PLAYER_COUNT
+        self.player_count == 2
     }
 
     /// Returns whether this is a multiplayer game.
@@ -58,7 +54,7 @@ impl GameState {
     /// players. See section 8, “Multiplayer Rules.”
     #[must_use]
     pub const fn is_multiplayer_game(&self) -> bool {
-        self.player_count > MINIMUM_PLAYER_COUNT
+        self.player_count > 2
     }
 }
 
